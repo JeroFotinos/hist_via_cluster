@@ -1,7 +1,12 @@
-import numpy as np
 import os
-from sklearn.utils import Bunch
 from typing import Tuple, List
+
+import numpy as np
+
+import pandas as pd
+
+from sklearn.utils import Bunch
+
 
 # Define the order of elements in lowercase
 element_order = ['Ca', 'Cu', 'Fe', 'K', 'Mn', 'P', 'S', 'Zn']
@@ -87,7 +92,7 @@ def find_dat_files(directory: str) -> List[str]:
     return dat_files
 
 # Main function to load fluorescence data
-def load_fluorescence(directory: str) -> Bunch:
+def load_fluorescence(directory: str, as_frame: bool = False) -> Bunch:
     """
     Loads fluorescence data from the specified directory and returns it as a
     Bunch object.
@@ -97,6 +102,8 @@ def load_fluorescence(directory: str) -> Bunch:
     directory : str
         The root directory containing the .dat files with the fluorescence
         data.
+    as_frame : bool, default=False
+        If True, Bunch includes data as a pandas DataFrame
 
     Returns
     -------
@@ -153,6 +160,10 @@ def load_fluorescence(directory: str) -> Bunch:
     mouse_list = [key[1] for key in unique_keys]
     take_list = [key[2] for key in unique_keys]
 
+    # if as_frame is True, return the data as a DataFrame
+    if as_frame:
+        df = load_frame(directory)
+
     # Return the Bunch object with the dataset
     return Bunch(
         DESCR=get_description(),
@@ -161,8 +172,81 @@ def load_fluorescence(directory: str) -> Bunch:
         mouse=np.array(mouse_list),
         take=np.array(take_list),
         images=images_list,  # List of 3D arrays
-        element_order=element_order
+        element_order=element_order,
+        frame=df if as_frame else None
     )
+
+
+def load_frame(directory: str) -> pd.DataFrame:
+    """
+    Loads the fluorescence dataset and returns it as a pandas DataFrame.
+    
+    The DataFrame contains one row per pixel with the following columns:
+    - diet: Encoded diet category (0: 'control', 1: 'omega3', 2: 'omega6')
+    - mouse: Mouse number
+    - take: Take number
+    - row: Row index of the pixel in the image
+    - col: Column index of the pixel in the image
+    - Columns for each element (e.g., 'Ca', 'Cu', 'Fe', etc.) representing the fluorescence values.
+    
+    Parameters
+    ----------
+    directory : str
+        The root directory containing the .dat files with the fluorescence data.
+    
+    Returns
+    -------
+    df : pd.DataFrame
+        A pandas DataFrame containing the pixel data for all images, with correct dtypes.
+    """
+    data = {}
+    dat_files = find_dat_files(directory)
+
+    for filename in dat_files:
+        filepath = filename
+        diet, mouse, take, elem = extract_metadata(filename)
+        pixels, fluorescence = load_image(filepath)
+
+        # Process each pixel in the image
+        for row, col, fluo in zip(pixels[:, 0].astype(int), pixels[:, 1].astype(int), fluorescence):
+            # Create a unique key for each pixel based on diet, mouse, take, row, and col
+            pixel_key = (diet, mouse, take, row, col)
+
+            # If this pixel has been seen before, just update the fluorescence for this element
+            if pixel_key not in data:
+                # Initialize the pixel data with NaN for all elements
+                data[pixel_key] = {elem: np.nan for elem in element_order}
+                # Add the metadata
+                data[pixel_key].update({
+                    'diet': diet,
+                    'mouse': mouse,
+                    'take': take,
+                    'row': row,
+                    'col': col
+                })
+
+            # Update the specific element's fluorescence value
+            data[pixel_key][elem] = fluo
+
+    # Convert the dictionary of pixel data to a DataFrame
+    df = pd.DataFrame.from_dict(data, orient='index')
+
+    # Ensure correct dtypes
+    df['diet'] = df['diet'].astype('category')
+    df['mouse'] = df['mouse'].astype(int)
+    df['take'] = df['take'].astype(int)
+    df['row'] = df['row'].astype(int)
+    df['col'] = df['col'].astype(int)
+    
+    for elem in element_order:
+        df[elem] = df[elem].astype(float)
+
+    # Reorder the columns as specified
+    columns_order = ['diet', 'mouse', 'take', 'row', 'col'] + element_order
+    df = df[columns_order]
+
+    return df.reset_index(drop=True)
+
 
 def get_description() -> str:
     """
