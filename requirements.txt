@@ -26,3 +26,7 @@ rich
 rich[jupyter]
 statprof-smarkets
 sphinx
+
+scikit-image
+napari[all]
+magicgui
