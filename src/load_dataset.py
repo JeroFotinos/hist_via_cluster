@@ -1,26 +1,34 @@
 import os
-
-from typing import Tuple, List, Optional
-
-from PIL import Image
+from typing import List, Optional, Tuple
 
 import numpy as np
-
 import pandas as pd
-
-from skimage.transform import resize
-
-from scipy.stats import mode
-
+from PIL import Image
 from sklearn.utils import Bunch
 
-
 # Define the order of elements in lowercase
-element_order = ['Ca', 'Cu', 'Fe', 'K', 'Mn', 'P', 'S', 'Zn']
+element_order = ["Ca", "Cu", "Fe", "K", "Mn", "P", "S", "Zn"]
 
 # Mapping for diet categories
-diet_mapping = {'control': 0, 'omega3': 1, 'omega6': 2}
-diet_names = ['control', 'omega3', 'omega6']
+diet_mapping = {"control": 0, "omega3": 1, "omega6": 2}
+diet_names = ["control", "omega3", "omega6"]
+
+# Maps for Bunch objects
+diet_map = {0: "control", 1: "omega3", 2: "omega6"}
+element_map = {i: elem for i, elem in enumerate(element_order)}
+label_map = {
+    0: "no label",
+    1: "necrotic tissue",
+    2: "tumoral A",
+    3: "tumoral B",
+    4: "tumoral C",
+    5: "artifacts",
+    6: "blood",
+    7: "loose connective tissue",
+    8: "no sample",
+    9: "dense connective tissue",
+    10: "paraffin",
+}
 
 
 # Function to extract metadata from the filename
@@ -49,16 +57,18 @@ def extract_metadata(filename: str) -> Tuple[int, int, int, str]:
     """
     # Extract just the file name, ignoring directory
     basename = os.path.basename(filename)
-    parts = basename.split('_')
+    parts = basename.split("_")
     diet = diet_mapping[parts[1]]
     mouse = int(parts[3])
     take = int(parts[5])
-    elem = parts[7].replace('.dat', '')
+    elem = parts[7].replace(".dat", "")
     return diet, mouse, take, elem
 
 
 # Function to identify image type and extract metadata
-def identify_and_extract_metadata(filename: str) -> Tuple[str, Optional[Tuple[int, int, int, Optional[str]]]]:
+def identify_and_extract_metadata(
+    filename: str,
+) -> Tuple[str, Optional[Tuple[int, int, int, Optional[str]]]]:
     """
     Identifies the type of image and extracts metadata from the filename.
 
@@ -68,7 +78,7 @@ def identify_and_extract_metadata(filename: str) -> Tuple[str, Optional[Tuple[in
     - Histological images (hist_img - recort):
         'dieta_control_raton_7_toma_0_hist-recort.png';
     - Labels for histological images (hist_img_labels - labels):
-        'dieta_control_raton_7_toma_0_hist-labels.tif'. 
+        'dieta_control_raton_7_toma_0_hist-labels.tif'.
 
     Parameters
     ----------
@@ -91,27 +101,27 @@ def identify_and_extract_metadata(filename: str) -> Tuple[str, Optional[Tuple[in
         - elem : str (only for fluorescence images, otherwise None)
     """
     basename = os.path.basename(filename)
-    if 'element' in basename:
-        parts = basename.split('_')
+    if "element" in basename:
+        parts = basename.split("_")
         diet = diet_mapping[parts[1]]
         mouse = int(parts[3])
         take = int(parts[5])
-        elem = parts[7].replace('.dat', '')
-        return 'fluorescence', (diet, mouse, take, elem)
-    elif 'recort' in basename:
-        parts = basename.split('_')
+        elem = parts[7].replace(".dat", "")
+        return "fluorescence", (diet, mouse, take, elem)
+    elif "recort" in basename:
+        parts = basename.split("_")
         diet = diet_mapping[parts[1]]
         mouse = int(parts[3])
         take = int(parts[5])
-        return 'hist_img', (diet, mouse, take, None)
-    elif 'labels' in basename:
-        parts = basename.split('_')
+        return "hist_img", (diet, mouse, take, None)
+    elif "labels" in basename:
+        parts = basename.split("_")
         diet = diet_mapping[parts[1]]
         mouse = int(parts[3])
         take = int(parts[5])
-        return 'hist_img_labels', (diet, mouse, take, None)
+        return "hist_img_labels", (diet, mouse, take, None)
     else:
-        return 'unknown', None
+        return "unknown", None
 
 
 # Function to load fluorescence data from a file
@@ -172,7 +182,8 @@ def load_labels_image(filepath: str) -> np.ndarray:
     -------
     labels_image : np.ndarray
         A NumPy array representation of the labels for the histology image.
-        The shape will depend on the image (e.g., (height, width) for single-channel).
+        The shape will depend on the image (e.g., (height, width) for
+        single-channel).
     """
     # Open the image file
     with Image.open(filepath) as img:
@@ -196,14 +207,14 @@ def find_files(directory: str) -> List[str]:
     files : list of str
         A list of paths to the found files.
     """
-    valid_extensions = {'.dat', '.tif', '.tiff', '.jpg', '.png'}
+    valid_extensions = {".dat", ".tif", ".tiff", ".jpg", ".png"}
     found_files = []
-    
+
     for root, dirs, files in os.walk(directory):
         for file in files:
             if any(file.lower().endswith(ext) for ext in valid_extensions):
                 found_files.append(os.path.join(root, file))
-    
+
     return found_files
 
 
@@ -254,12 +265,13 @@ def resize_with_majority_rule(label_image, target_shape):
     return resized_image
 
 
-
 # Main function to load fluorescence data
-def load_fluorescence(directory: str, as_frame: bool = False, as_dict: bool = False) -> Bunch:
+def load_fluorescence(
+    directory: str, as_frame: bool = False, as_dict: bool = False
+) -> Bunch:
     """
-    Loads fluorescence data from the specified directory and returns it as a
-    Bunch object.
+    Loads fluorescence data and histological images and labels from the
+    specified directory and returns it as a Bunch object.
 
     Parameters
     ----------
@@ -280,6 +292,8 @@ def load_fluorescence(directory: str, as_frame: bool = False, as_dict: bool = Fa
             - diet_names: A list of diet names where the index of each element
                 was used in `diet` instead of the string, i.e., '0' was used
                 instead of diet_names[0], which is 'control'.
+            - diet_map: A dictionary mapping integer encoding of diet names to
+                the actual diet names.
             - element_order: A list of strings indicating the order of
                 elements in the 3D images. E.g., if `as_dict` is False, that
                 means that `images[n][0]` is the 2D image for the fluorescence
@@ -288,6 +302,8 @@ def load_fluorescence(directory: str, as_frame: bool = False, as_dict: bool = Fa
                 `images[(diet, mouse, take)][0]` is the 2D image for the
                 fluorescence of `element_order[0]`, which is `'Ca'`, of take
                 `take` of mouse `mouse` with diet `diet`.
+            - element_map: A dictionary mapping integer encoding of element
+                names to the actual element names.
             - diet: A 1D array of diet categories corresponding to each 3D
                 image. Provided if `as_dict` is False.
             - mouse: A 1D array of mouse numbers corresponding to each 3D
@@ -297,28 +313,43 @@ def load_fluorescence(directory: str, as_frame: bool = False, as_dict: bool = Fa
                 different measurements done for the same mouse. Provided if
                 `as_dict` is False.
             - images: if `as_dict` is False, list of 3D NumPy arrays, one for
-                each combination of diet, mouse, and take. If `as_dict` is 
+                each combination of diet, mouse, and take. If `as_dict` is
                 True, a dictionary of 3D NumPy arrays, with keys corresponding
-                to diet, mouse, and take.
-            
+                to diet, mouse, and take, given as a tuple
+                `(diet, mouse, take)`.
+            - hist_img: list of histology images, either as a list of NumPy
+                arrays if `as_dict` is False or as a dictionary of NumPy
+                arrays with the usual `(diet, mouse, take)` key, if `as_dict`
+                is True.
+            - hist_img_labels: list of labeles for the histology images, with
+                the same dimensions and data structure of `hist_img`.
+            - img_labels: list of resized labeles images to match the
+                dimensions of the fluorescence images. The transformation is a
+                downscaling with majority rule. The data structure is the same
+                as `hist_img` and `hist_img_labels`.
+            - label_map: A dictionary mapping integer encoding of label names
+                to the actual label names.
+            - frame: A pandas DataFrame containing the pixel data for all
+                images, with correct dtypes. Provided if `as_frame` is True.
+
     """
     # Initialize dictionaries to store metadata and images
     images_dict = {}
     hist_img_dict = {}
     hist_img_labels_dict = {}
     img_labels_dict = {}
-    
+
     # Find all files
-    all_files = find_files(directory) # ex-find_dat_files
-    
+    all_files = find_files(directory)  # ex-find_dat_files
+
     # Process each file
     for filename in all_files:
         filepath = filename
         img_type, metadata = identify_and_extract_metadata(filename)
-        
-        if img_type == 'fluorescence' and metadata:
+
+        if img_type == "fluorescence" and metadata:
             diet, mouse, take, elem = metadata
-            pixels, fluorescence = load_fluo_image(filepath) # ex-load_image
+            pixels, fluorescence = load_fluo_image(filepath)  # ex-load_image
 
             # Organize by diet, mouse, take
             key = (diet, mouse, take)
@@ -330,15 +361,17 @@ def load_fluorescence(directory: str, as_frame: bool = False, as_dict: bool = Fa
 
             # Find the index of the current element in the predefined order
             elem_index = element_order.index(elem)
-            for row, col, fluo in zip(pixels[:, 0].astype(int), pixels[:, 1].astype(int), fluorescence):
+            for row, col, fluo in zip(
+                pixels[:, 0].astype(int), pixels[:, 1].astype(int), fluorescence
+            ):
                 images_dict[key][row, col, elem_index] = fluo
-        
-        elif img_type == 'hist_img' and metadata:
+
+        elif img_type == "hist_img" and metadata:
             diet, mouse, take, _ = metadata
             key = (diet, mouse, take)
             hist_img_dict[key] = load_hist_image(filepath)
-        
-        elif img_type == 'hist_img_labels' and metadata:
+
+        elif img_type == "hist_img_labels" and metadata:
             diet, mouse, take, _ = metadata
             key = (diet, mouse, take)
             hist_img_labels_dict[key] = load_labels_image(filepath)
@@ -346,10 +379,11 @@ def load_fluorescence(directory: str, as_frame: bool = False, as_dict: bool = Fa
     # Resize labeled images to match fluorescence image dimensions
     for key in hist_img_labels_dict:
         if key in images_dict:
-            fluorescence_shape = images_dict[key].shape[:2]  # Extract height and width
+            # Extract height and width
+            fluorescence_shape = images_dict[key].shape[:2]
+            # Resize the label image to match the fluorescence image
             img_labels_dict[key] = resize_with_majority_rule(
-                hist_img_labels_dict[key],
-                target_shape=fluorescence_shape
+                hist_img_labels_dict[key], target_shape=fluorescence_shape
             )
 
     # Prepare the final dataset
@@ -359,12 +393,11 @@ def load_fluorescence(directory: str, as_frame: bool = False, as_dict: bool = Fa
     mouse_list = [key[1] for key in unique_keys]
     take_list = [key[2] for key in unique_keys]
 
-    # Convert histology and label dictionaries to ordered lists if as_dict is False
+    # Convert histology and label dictionaries to ordered lists if not as_dict
     if not as_dict:
         hist_img_list = [hist_img_dict.get(key) for key in unique_keys]
         hist_img_labels_list = [hist_img_labels_dict.get(key) for key in unique_keys]
         img_labels_list = [img_labels_dict.get(key) for key in unique_keys]
-
 
     # if as_frame is True, return the data as a DataFrame
     if as_frame:
@@ -373,53 +406,64 @@ def load_fluorescence(directory: str, as_frame: bool = False, as_dict: bool = Fa
     if as_dict:
         return Bunch(
             DESCR=get_description(),
-            images=images_dict,
             diet_names=diet_names,
+            diet_map=diet_map,
             element_order=element_order,
+            element_map=element_map,
+            images=images_dict,
             hist_img=hist_img_dict,
             hist_img_labels=hist_img_labels_dict,
             img_labels=img_labels_dict,  # Rescaled labels
-            frame=df if as_frame else None
+            label_map=label_map,
+            frame=df if as_frame else None,
         )
     else:
         # Return the Bunch object with the dataset
         return Bunch(
             DESCR=get_description(),
-            diet=np.array(diet_list),
             diet_names=diet_names,
+            diet_map=diet_map,
+            element_order=element_order,
+            element_map=element_map,
+            diet=np.array(diet_list),
             mouse=np.array(mouse_list),
             take=np.array(take_list),
             images=images_list,  # List of 3D arrays
-            element_order=element_order,
             hist_img=hist_img_list,  # Ordered list of histology images
-            hist_img_labels=hist_img_labels_list,  # Ordered list of labeled histology images
-            img_labels=img_labels_list,  # Ordered list of resized labeled images
-            frame=df if as_frame else None
+            hist_img_labels=hist_img_labels_list,  # Ordered list of label
+            # images with the same size as the histology images
+            img_labels=img_labels_list,  # Ordered list of labele images,
+            # resized to match the shape of the corresponding fluorescence
+            # image in `images`
+            label_map=label_map,
+            frame=df if as_frame else None,
         )
 
 
 def load_frame(directory: str) -> pd.DataFrame:
     """
     Loads the fluorescence dataset and returns it as a pandas DataFrame.
-    
+
     The DataFrame contains one row per pixel with the following columns:
     - diet: Encoded diet category (0: 'control', 1: 'omega3', 2: 'omega6')
     - mouse: Mouse number
     - take: Take number
     - row: Row index of the pixel in the image
     - col: Column index of the pixel in the image
-    - Columns for each element (e.g., 'Ca', 'Cu', 'Fe', etc.) representing the fluorescence values.
+    - Columns for each element (e.g., 'Ca', 'Cu', 'Fe', etc.) representing the
+        fluorescence values.
     - label: Label for the pixel (if available)
-    
+
     Parameters
     ----------
     directory : str
         The root directory containing the fluorescence dataset.
-    
+
     Returns
     -------
     df : pd.DataFrame
-        A pandas DataFrame containing the pixel data for all images, with correct dtypes.
+        A pandas DataFrame containing the pixel data for all images, with
+        correct dtypes.
     """
     # Load the full dataset using load_fluorescence
     dataset = load_fluorescence(directory, as_dict=True)
@@ -441,32 +485,41 @@ def load_frame(directory: str) -> pd.DataFrame:
                 label = labels_image[row, col] if labels_image is not None else np.nan
 
                 # Append the pixel data
-                data.append({
-                    'diet': diet,
-                    'mouse': mouse,
-                    'take': take,
-                    'row': row,
-                    'col': col,
-                    **{elem: fluorescence_values[i] for i, elem in enumerate(dataset.element_order)},
-                    'label': label
-                })
+                data.append(
+                    {
+                        "diet": diet,
+                        "mouse": mouse,
+                        "take": take,
+                        "row": row,
+                        "col": col,
+                        **{
+                            elem: fluorescence_values[i]
+                            for i, elem in enumerate(dataset.element_order)
+                        },
+                        "label": label,
+                    }
+                )
 
     # Convert the list of pixel data to a DataFrame
     df = pd.DataFrame(data)
 
     # Ensure correct dtypes
-    df['diet'] = df['diet'].astype('category')
-    df['mouse'] = df['mouse'].astype(int)
-    df['take'] = df['take'].astype(int)
-    df['row'] = df['row'].astype(int)
-    df['col'] = df['col'].astype(int)
-    df['label'] = df['label'].astype('category')  # Assuming labels are categorical
+    df["diet"] = df["diet"].astype("category")
+    df["mouse"] = df["mouse"].astype(int)
+    df["take"] = df["take"].astype(int)
+    df["row"] = df["row"].astype(int)
+    df["col"] = df["col"].astype(int)
+    df["label"] = df["label"].astype("category")  # Labels are categorical
 
     for elem in dataset.element_order:
         df[elem] = df[elem].astype(float)
 
     # Reorder the columns as specified
-    columns_order = ['diet', 'mouse', 'take', 'row', 'col'] + dataset.element_order + ['label']
+    columns_order = (
+        ["diet", "mouse", "take", "row", "col"] +
+        dataset.element_order +
+        ["label"]
+    )
     df = df[columns_order]
 
     return df.reset_index(drop=True)
@@ -482,34 +535,106 @@ def get_description() -> str:
         A string describing the structure of the dataset.
     """
     description = """
+    ====================
     Fluorescence Dataset
+    ====================
 
-    ADD EXPERIMENTAL METHODOLOGY HERE.
+
+    Summary
+    -------
 
     This dataset contains fluorescence images for elemental composition
-    analysis of mammary gland adenocarcinomas in mice. It contains various
-    mouse samples, each of which have been measured at least one. Different
-    measurements of the same mouse are indexed by the 'take' attribute. Each
-    mouse has also had a specific diet. The dataset is structured as follows:
+    analysis of mammary gland adenocarcinomas in mice, and images from the
+    histological analysis. It contains various mouse samples, each with a
+    specific diet, measured at least once. Different measurements of the same
+    mouse are indexed by the 'take' attribute. The dataset is structured as a
+    `scikit-learn` `Bunch` object, and can optionally include a pandas
+    DataFrame with pixels as rows and their data (row, column, mouse, take,
+    diet, fluorescence for each element, type of tissue) as columns.
 
-    - DESCR: A string description of the dataset. (Chía=omega3, Cártamo=omega6)
-    - diet: A 1D array where each element is an integer
-        (0: 'control', 1: 'omega3', 2: 'omega6') indicating the diet category
-        for each sample.
-    - diet_names: A list of strings with the diet names:
-        ['control', 'omega3', 'omega6'], where the index of each element
-        coincides with its mapping value.
-    - mouse: A 1D array containing the mouse number for each sample.
-    - take: A 1D array containing the take number for each sample.
-    - images: A list of 3D NumPy arrays representing the fluorescence images
-        for each sample. The dimensions of each 3D array are (height, width, 8),
-        where each of the 8 slices along the third dimension corresponds to
-        the fluorescence of a specific element. The elements are stored in the
-        following order: ['Ca', 'Cu', 'Fe', 'K', 'Mn', 'P', 'S', 'Zn'].
-    - element_order: A list of strings representing the element order used to
-        build the 3D images. That means that `images[n][0]` is
-        the 2D image for the fluorescence of `element_order[0]`, which
-        is `'Ca'`, of `mouse[n]`, `take[n]` with `diet[n]`.
+
+    Experimental Methodology
+    ------------------------
+
+    An experimental model was implemented in BALB/C mice through the
+    subcutaneous inoculation of transplantable mammary gland adenocarcinoma
+    cells. The mice were divided into three dietary groups: one rich in
+    omega-3, another rich in omega-6, and a control group without lipid
+    supplementation. Tumors extracted from the animals were fixed in formalin,
+    embedded in paraffin, and sectioned into thin slices of a few microns.
+    Each sample underwent conventional histological analysis using
+    hematoxylin-eosin staining, and images were captured with an optical
+    microscope.
+
+    Additionally, a micro X-ray fluorescence analysis with synchrotron
+    radiation was performed at the Brazilian Synchrotron Light Laboratory
+    (LNLS) in Campinas, Brazil. The samples were scanned in 2D, and XRF
+    spectra were recorded using a Si(Li) detector (KETEK Vitus SDD) with a
+    live counting time of 0.5 seconds per pixel and a step size of 100 μm in
+    both orthogonal directions. This procedure enabled us to determine the
+    spatial distribution of elements such as S, P, Ca, Mn, Fe, Cu, and Zn.
+
+
+    Structure of the Dataset
+    ------------------------
+
+    By default, we favor the use of lists, having as a result the following
+    attributes:
+
+    - DESCR: A string description of the dataset.
+    - diet_names: A list of diet names where the index of each element
+        was used in `diet` instead of the string, i.e., '0' was used
+        instead of diet_names[0], which is 'control'.
+    - diet_map: A dictionary mapping integer encoding of diet names to
+        the actual diet names.
+    - element_order: A list of strings indicating the order of
+        elements in the 3D images. E.g., if `as_dict` is False, that
+        means that `images[n][0]` is the 2D image for the fluorescence
+        of `element_order[0]`, which is `'Ca'`, of `mouse[n]`,
+        `take[n]` with `diet[n]`. If `as_dict` is True,
+        `images[(diet, mouse, take)][0]` is the 2D image for the
+        fluorescence of `element_order[0]`, which is `'Ca'`, of take
+        `take` of mouse `mouse` with diet `diet`.
+    - element_map: A dictionary mapping integer encoding of element
+        names to the actual element names.
+    - diet: A 1D array of diet categories corresponding to each 3D
+        image. Provided if `as_dict` is False.
+    - mouse: A 1D array of mouse numbers corresponding to each 3D
+        image. Provided if `as_dict` is False.
+    - take: A 1D array of take numbers corresponding to each 3D image.
+        Take is just an int that enumerates, starting from zero, the
+        different measurements done for the same mouse. Provided if
+        `as_dict` is False.
+    - images: if `as_dict` is False, list of 3D NumPy arrays, one for
+        each combination of diet, mouse, and take. If `as_dict` is
+        True, a dictionary of 3D NumPy arrays, with keys corresponding
+        to diet, mouse, and take, given as a tuple
+        `(diet, mouse, take)`.
+    - hist_img: list of histology images, either as a list of NumPy
+        arrays if `as_dict` is False or as a dictionary of NumPy
+        arrays with the usual `(diet, mouse, take)` key, if `as_dict`
+        is True.
+    - hist_img_labels: list of labeles for the histology images, with
+        the same dimensions and data structure of `hist_img`.
+    - img_labels: list of resized labeles images to match the
+        dimensions of the fluorescence images. The transformation is a
+        downscaling with majority rule. The data structure is the same as
+        `hist_img` and `hist_img_labels`.
+    - label_map: A dictionary mapping integer encoding of label names
+        to the actual label names.
+    - frame: A pandas DataFrame containing the pixel data for all
+        images, with correct dtypes. Provided if `as_frame` is True.
+
+    The DataFrame privided in `frame` if `as_frame`, contains one row per
+    pixel with the following columns:
+    - diet: Encoded diet category (0: 'control', 1: 'omega3', 2: 'omega6')
+    - mouse: Mouse number
+    - take: Take number
+    - row: Row index of the pixel in the image
+    - col: Column index of the pixel in the image
+    - Columns for each element (e.g., 'Ca', 'Cu', 'Fe', etc.) representing the
+        fluorescence values.
+    - label: Label for the pixel
 
     Lables for histological images are also available in the dataset:
     - 0: no label
@@ -518,9 +643,23 @@ def get_description() -> str:
     - 3: tumoral B
     - 4: tumoral C
     - 5: artifacts (e.g., folds, tears, etc.)
-    - 6: blood vessels
+    - 6: blood (e.g., blood vessels, hemorrhage, etc.)
     - 7: loose connective tissue
     - 8: no sample
     - 9: dense connective tissue
+    - 10: paraffin (matrix material)
+
+
+    References
+    ----------
+
+    - [1] Bencharski, C., Soria, E. A., Falchini, G. E., Pasqualini, M. E., &
+        Perez, R. D. (2023). Study of anti-tumorigenic actions of essential
+        fatty acids in a murine mammary gland adenocarcinoma by micro-XRF.
+        Analytical Methods, 15(16), 2044–2051.
+    - [2] Falchini, G. E., Malezan, A., Poletti, M. E., Soria, E., Pasqualini,
+        M., & Perez, R. D. (2021). Analysis of phosphorous content in cancer
+        tissue by synchrotron micro-XRF. Radiation Physics and Chemistry, 179,
+        109157.
     """
     return description.strip()
