@@ -663,4 +663,4 @@ def get_description() -> str:
         tissue by synchrotron micro-XRF. Radiation Physics and Chemistry, 179,
         109157.
     """
-    return description.strip()
+    return description  # .strip()
