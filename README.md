@@ -5,18 +5,19 @@ The dataset was first conceived with the aim of automating the histological anal
 
 This dataset was assembled during 2024 by Jerónimo Fotinós, part of the Condensed Matter Theory group (GTMC, FaMAF) at the National University of Córdoba (UNC), and Constanza Bencharski, part of the Atomic and Nuclear Spectroscopy group (FaMAF, UNC), with the assistance of Dr. Elio Soria from the Faculty of Medical Sciences (UNC).
 
-![Example Image](pics/case__diet_0_mouse_4_take_0.png)
+![Example Image](https://github.com/JeroFotinos/hist_via_cluster/raw/main/pics/case__diet_0_mouse_4_take_0.png)
 
 
 ## Repository Structure
 
 ```
 .
-├── data/                 # Original dataset files
+├── data/                  # Original dataset files
 ├── src/
-│   ├── anotate.ipynb     # Notebook illustrating the annotation process
-│   └── load_dataset.py   # Script with the primary function `load_fluorescence` to load the dataset
-└── README.md             # This file
+│   ├── anotate.ipynb      # Notebook illustrating the annotation process
+│   └── load_dataset.py    # Script with the primary function `load_fluorescence` to load the dataset
+├── getting_started.ipynb  # Tutorial on how to load the dataset and its structure
+└── README.md              # This file
 ```
 
 ## About the Dataset
@@ -74,7 +75,7 @@ Parameters such as `as_dict` or `as_frame` can be toggled to load the images and
 
 ## Example Notebook
 
-For an interactive demonstration, refer to 
+For an interactive demonstration on how to load the dataset and the structure of its contents, refer to the `./getting_started.ipynb` notebook.
 
 ## Annotation of the Data
 Histological images were annotated with the aid of Dr. Elio Soria, using the `anotate.ipynb` notebook in the `src` directory. This notebook walks you through the annotation process and provides examples of how to manipulate and visualize the data.
