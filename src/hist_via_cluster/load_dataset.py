@@ -267,7 +267,10 @@ def resize_with_majority_rule(label_image, target_shape):
 
 # Main function to load fluorescence data
 def load_fluorescence(
-    directory: str, as_frame: bool = False, as_dict: bool = False
+    directory: str,
+    as_frame: bool = False,
+    as_dict: bool = False,
+    neighborhood_size: int = 1,
 ) -> Bunch:
     """
     Loads fluorescence data and histological images and labels from the
@@ -399,9 +402,13 @@ def load_fluorescence(
         hist_img_labels_list = [hist_img_labels_dict.get(key) for key in unique_keys]
         img_labels_list = [img_labels_dict.get(key) for key in unique_keys]
 
-    # if as_frame is True, return the data as a DataFrame
+    # if as_frame is True, build the pixel-level DataFrame
     if as_frame:
-        df = load_frame(directory)
+        df = load_pixel_dataframe_with_neighborhood(
+            directory=directory,
+            neighborhood_size=neighborhood_size,
+        )
+
 
     if as_dict:
         return Bunch(
@@ -442,83 +449,196 @@ def load_fluorescence(
 
 def load_frame(directory: str) -> pd.DataFrame:
     """
-    Loads the fluorescence dataset and returns it as a pandas DataFrame.
+    Backwards-compatible wrapper that returns the pixel-level DataFrame
+    with neighborhood size 1 (only the central pixel).
 
-    The DataFrame contains one row per pixel with the following columns:
-    - diet: Encoded diet category (0: 'control', 1: 'omega3', 2: 'omega6')
-    - mouse: Mouse number
-    - take: Take number
-    - row: Row index of the pixel in the image
-    - col: Column index of the pixel in the image
-    - Columns for each element (e.g., 'Ca', 'Cu', 'Fe', etc.) representing the
-        fluorescence values.
-    - label: Label for the pixel (if available)
+    This function is kept for compatibility and simply calls
+    :func:`load_pixel_dataframe_with_neighborhood` with
+    ``neighborhood_size=1``.
 
     Parameters
     ----------
     directory : str
-        The root directory containing the fluorescence dataset.
+        Root directory containing the fluorescence dataset.
 
     Returns
     -------
-    df : pd.DataFrame
-        A pandas DataFrame containing the pixel data for all images, with
-        correct dtypes.
+    df : pandas.DataFrame
+        Pixel-level DataFrame with one row per pixel and columns:
+        - diet, mouse, take, row, col
+        - fluorescence of the central pixel for each element, in columns
+          named e.g. "Ca_+0_+0", "Cu_+0_+0", etc.
+        - label
     """
-    # Load the full dataset using load_fluorescence
+    return load_pixel_dataframe_with_neighborhood(
+        directory=directory,
+        neighborhood_size=1,
+    )
+
+
+def load_pixel_dataframe_with_neighborhood(
+    directory: str,
+    neighborhood_size: int = 1,
+) -> pd.DataFrame:
+    """
+    Builds a pixel-level DataFrame including fluorescence in a square
+    neighborhood around each central pixel.
+
+    This function generalizes :func:`load_frame` by augmenting each pixel
+    with fluorescence values from a square neighborhood of side
+    ``neighborhood_size`` centered at that pixel. The central pixel is the
+    one whose label we are trying to predict.
+
+    The naming convention for neighborhood features is, for each element
+    ``elem`` in ``element_order``::
+
+        f"{elem}_{row_offset:+d}_{col_offset:+d}"
+
+    where:
+
+    - ``row_offset`` is the relative vertical offset with the convention
+      that ``+1`` means one pixel *up* (towards decreasing row index in the
+      underlying NumPy array) and ``-1`` means one pixel *down*
+      (towards increasing row index).
+    - ``col_offset`` is the relative horizontal offset with the convention
+      that ``+1`` means one pixel to the *right* (increasing column index),
+      and ``-1`` one pixel to the *left*.
+
+    For example, for element ``'Ca'``:
+
+    - ``"Ca_+0_+0"``: central pixel
+    - ``"Ca_+1_+0"``: pixel directly above the central pixel
+    - ``"Ca_+0_+1"``: pixel to the right of the central pixel
+    - ``"Ca_-1_+0"``: pixel directly below the central pixel
+
+    Only pixels whose full neighborhood is contained in the image are
+    included. That is, for an image of shape ``(height, width, n_elements)``,
+    with ``k = (neighborhood_size - 1) // 2``, we keep central pixels with
+
+    - ``k <= row <= height - 1 - k``
+    - ``k <= col <= width - 1 - k``
+
+    Parameters
+    ----------
+    directory : str
+        Root directory containing the fluorescence dataset (same as in
+        :func:`load_fluorescence`).
+    neighborhood_size : int, default=1
+        Side length of the square neighborhood (must be a positive odd
+        integer). ``neighborhood_size=1`` recovers the original behavior of
+        :func:`load_frame`, i.e., only the central pixel is used for each
+        feature (columns named e.g. "Ca_+0_+0").
+
+    Returns
+    -------
+    df : pandas.DataFrame
+        DataFrame with one row per central pixel and the following columns:
+
+        - ``diet`` : encoded diet category (0, 1, 2) as ``category``
+        - ``mouse`` : mouse id (int)
+        - ``take`` : take number (int)
+        - ``row`` : row index of the central pixel (int)
+        - ``col`` : column index of the central pixel (int)
+        - fluorescence columns for each element and each relative offset
+          in the chosen neighborhood (float), named as above
+        - ``label`` : label for the central pixel (if available), stored as
+          a pandas ``category``; if no label is available for that image,
+          values are ``NaN``.
+
+    Raises
+    ------
+    ValueError
+        If ``neighborhood_size`` is not a positive odd integer.
+
+    Notes
+    -----
+    This function creates the DataFrame using the dictionary representation
+    of the dataset (``as_dict=True`` in :func:`load_fluorescence`), so that
+    keys ``(diet, mouse, take)`` are available and images are handled as
+    3D NumPy arrays.
+    """
+    if neighborhood_size < 1 or neighborhood_size % 2 == 0:
+        raise ValueError(
+            "neighborhood_size must be a positive odd integer, "
+            f"got {neighborhood_size!r}."
+        )
+
+    # Load dataset as a dict of images and labels
     dataset = load_fluorescence(directory, as_dict=True)
 
-    # Initialize a list to store pixel data
-    data = []
+    k = (neighborhood_size - 1) // 2
+    offsets = [
+        (row_offset, col_offset)
+        for row_offset in range(-k, k + 1)
+        for col_offset in range(-k, k + 1)
+    ]
+
+    records = []
 
     for key, image in dataset.images.items():
         diet, mouse, take = key
+        height, width, n_elem = image.shape
         labels_image = dataset.img_labels.get(key, None)
 
-        # Loop through each pixel in the fluorescence image
-        for row in range(image.shape[0]):
-            for col in range(image.shape[1]):
-                # Extract fluorescence values for all elements
-                fluorescence_values = image[row, col, :]
+        # Central pixels that have a full neighborhood inside the image
+        row_start, row_end = k, height - k
+        col_start, col_end = k, width - k
 
-                # Extract label if available
-                label = labels_image[row, col] if labels_image is not None else np.nan
+        for row in range(row_start, row_end):
+            for col in range(col_start, col_end):
+                record = {
+                    "diet": diet,
+                    "mouse": mouse,
+                    "take": take,
+                    "row": row,
+                    "col": col,
+                }
 
-                # Append the pixel data
-                data.append(
-                    {
-                        "diet": diet,
-                        "mouse": mouse,
-                        "take": take,
-                        "row": row,
-                        "col": col,
-                        **{
-                            elem: fluorescence_values[i]
-                            for i, elem in enumerate(dataset.element_order)
-                        },
-                        "label": label,
-                    }
-                )
+                # Add fluorescence features for all elements and offsets
+                for elem_idx, elem in enumerate(dataset.element_order):
+                    for row_offset, col_offset in offsets:
+                        # Mapping from "mathematical" offsets to array indices:
+                        # +row_offset -> up (decreasing row index)
+                        # +col_offset -> right (increasing col index)
+                        neighbor_row = row - row_offset
+                        neighbor_col = col + col_offset
 
-    # Convert the list of pixel data to a DataFrame
-    df = pd.DataFrame(data)
+                        value = image[neighbor_row, neighbor_col, elem_idx]
+                        col_name = f"{elem}_{row_offset:+d}_{col_offset:+d}"
+                        record[col_name] = float(value)
 
-    # Ensure correct dtypes
+                # Label for the central pixel, if available
+                if labels_image is not None:
+                    label_value = labels_image[row, col]
+                else:
+                    label_value = np.nan
+
+                record["label"] = label_value
+                records.append(record)
+
+    df = pd.DataFrame(records)
+
+    # Dtypes
     df["diet"] = df["diet"].astype("category")
     df["mouse"] = df["mouse"].astype(int)
     df["take"] = df["take"].astype(int)
     df["row"] = df["row"].astype(int)
     df["col"] = df["col"].astype(int)
-    df["label"] = df["label"].astype("category")  # Labels are categorical
+    df["label"] = df["label"].astype("category")
 
+    # Ensure all fluorescence columns are float
+    # Build column order: meta, fluorescence, label
+    fluorescence_cols = []
     for elem in dataset.element_order:
-        df[elem] = df[elem].astype(float)
+        for row_offset, col_offset in offsets:
+            col_name = f"{elem}_{row_offset:+d}_{col_offset:+d}"
+            fluorescence_cols.append(col_name)
+            df[col_name] = df[col_name].astype(float)
 
-    # Reorder the columns as specified
     columns_order = (
-        ["diet", "mouse", "take", "row", "col"] +
-        dataset.element_order +
-        ["label"]
+        ["diet", "mouse", "take", "row", "col"]
+        + fluorescence_cols
+        + ["label"]
     )
     df = df[columns_order]
 
@@ -664,3 +784,90 @@ def get_description() -> str:
         109157.
     """
     return description  # .strip()
+
+
+# ====================== FOR TESTING PURPOSES ONLY ======================
+
+def old_load_frame(directory: str) -> pd.DataFrame:
+    """
+    Loads the fluorescence dataset and returns it as a pandas DataFrame.
+
+    The DataFrame contains one row per pixel with the following columns:
+    - diet: Encoded diet category (0: 'control', 1: 'omega3', 2: 'omega6')
+    - mouse: Mouse number
+    - take: Take number
+    - row: Row index of the pixel in the image
+    - col: Column index of the pixel in the image
+    - Columns for each element (e.g., 'Ca', 'Cu', 'Fe', etc.) representing the
+        fluorescence values.
+    - label: Label for the pixel (if available)
+
+    Parameters
+    ----------
+    directory : str
+        The root directory containing the fluorescence dataset.
+
+    Returns
+    -------
+    df : pd.DataFrame
+        A pandas DataFrame containing the pixel data for all images, with
+        correct dtypes.
+    """
+    # Load the full dataset using load_fluorescence
+    dataset = load_fluorescence(directory, as_dict=True)
+
+    # Initialize a list to store pixel data
+    data = []
+
+    for key, image in dataset.images.items():
+        diet, mouse, take = key
+        labels_image = dataset.img_labels.get(key, None)
+
+        # Loop through each pixel in the fluorescence image
+        for row in range(image.shape[0]):
+            for col in range(image.shape[1]):
+                # Extract fluorescence values for all elements
+                fluorescence_values = image[row, col, :]
+
+                # Extract label if available
+                label = labels_image[row, col] if labels_image is not None else np.nan
+
+                # Append the pixel data
+                data.append(
+                    {
+                        "diet": diet,
+                        "mouse": mouse,
+                        "take": take,
+                        "row": row,
+                        "col": col,
+                        **{
+                            elem: fluorescence_values[i]
+                            for i, elem in enumerate(dataset.element_order)
+                        },
+                        "label": label,
+                    }
+                )
+
+    # Convert the list of pixel data to a DataFrame
+    df = pd.DataFrame(data)
+
+    # Ensure correct dtypes
+    df["diet"] = df["diet"].astype("category")
+    df["mouse"] = df["mouse"].astype(int)
+    df["take"] = df["take"].astype(int)
+    df["row"] = df["row"].astype(int)
+    df["col"] = df["col"].astype(int)
+    df["label"] = df["label"].astype("category")  # Labels are categorical
+
+    for elem in dataset.element_order:
+        df[elem] = df[elem].astype(float)
+
+    # Reorder the columns as specified
+    columns_order = (
+        ["diet", "mouse", "take", "row", "col"] +
+        dataset.element_order +
+        ["label"]
+    )
+    df = df[columns_order]
+
+    return df.reset_index(drop=True)
